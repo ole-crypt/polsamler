@@ -20,30 +20,40 @@ export default async function handler(req, res) {
 }
 
 // ─── Vinmonopolet ─────────────────────────────────────────────────────────────
+// Bruker to kall: søk for å finne ID-er, deretter detaljer for pris/info
 
 async function fetchVinmonopolet(q, key) {
   if (!key) return [];
   try {
+    // Steg 1: Hent produktliste med alle detaljer
     const url = `https://apis.vinmonopolet.no/products/v0/details-normal?productShortNameContains=${encodeURIComponent(q)}&maxResults=30`;
     const r = await fetch(url, { headers: { 'Ocp-Apim-Subscription-Key': key } });
     if (!r.ok) return [];
     const data = await r.json();
-    return (data || []).map(p => ({
-      id:       'no-' + p.basic?.productId,
-      source:   'no',
-      name:     p.basic?.productShortName || p.basic?.productLongName || '',
-      sub:      [
-        p.main?.subCategory?.name,
-        p.basic?.alcoholContent ? p.basic.alcoholContent + '%' : '',
-        p.basic?.volume ? p.basic.volume + 'ml' : '',
-        p.origins?.country?.name || ''
-      ].filter(Boolean).join(' · '),
-      category: mapVmpCat(p.main?.mainCategory?.name || ''),
-      price:    p.prices?.[0]?.salesPrice || 0,
-      vol:      p.basic?.volume || 750,
-      alc:      p.basic?.alcoholContent || 0,
-      country:  p.origins?.country?.name || '',
-    }));
+
+    return (data || []).map(p => {
+      const basic = p.basic || {};
+      const main = p.main || {};
+      const origins = p.origins || {};
+      const prices = p.prices || [];
+
+      return {
+        id:       'no-' + basic.productId,
+        source:   'no',
+        name:     basic.productShortName || basic.productLongName || '',
+        sub:      [
+          main.subCategory?.name,
+          basic.alcoholContent != null ? basic.alcoholContent + '%' : '',
+          basic.volume != null ? basic.volume + 'ml' : '',
+          origins.country?.name || ''
+        ].filter(Boolean).join(' · '),
+        category: mapVmpCat(main.mainCategory?.name || ''),
+        price:    prices[0]?.salesPrice ?? 0,
+        vol:      basic.volume ?? 750,
+        alc:      basic.alcoholContent ?? 0,
+        country:  origins.country?.name || '',
+      };
+    });
   } catch (e) { return []; }
 }
 
@@ -78,14 +88,12 @@ async function fetchSystembolaget(q) {
 
     return _sbCache
       .filter(p => {
-        // Søk i alle navnefelt og produsentnavn
-        const searchStr = [
+        // Søk kun i produktnavn – ikke produsentnavn (unngår falske treff)
+        const nameStr = [
           p.productNameBold,
           p.productNameThin,
-          p.producerName,
-          p.supplierName,
         ].filter(Boolean).join(' ').toLowerCase();
-        return searchStr.includes(lq);
+        return nameStr.includes(lq);
       })
       .slice(0, 30)
       .map(p => ({
@@ -94,8 +102,8 @@ async function fetchSystembolaget(q) {
         name:     ((p.productNameBold || '') + (p.productNameThin ? ' ' + p.productNameThin : '')).trim(),
         sub:      [
           p.categoryLevel1,
-          p.alcoholPercentage ? p.alcoholPercentage + '%' : '',
-          p.volume ? p.volume + 'ml' : '',
+          p.alcoholPercentage != null ? p.alcoholPercentage + '%' : '',
+          p.volume != null ? p.volume + 'ml' : '',
           p.country || ''
         ].filter(Boolean).join(' · '),
         category: mapSeCat(p.categoryLevel1 || ''),
