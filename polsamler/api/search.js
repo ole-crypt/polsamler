@@ -58,28 +58,43 @@ async function scrapeVmpProduct(id, fallbackName) {
     if (!r.ok) return null;
     const html = await r.text();
 
-    // Finn JSON-blokken med produktdata embedded i HTML
-    const match = html.match(/"price"\s*:\s*\{[^}]*"value"\s*:\s*([\d.]+)/);
-    const price = match ? parseFloat(match[1]) : 0;
+    // Finn den store JSON-blokken med produktdata – ser slik ut:
+    // {"name":"Mack Porter","packageType":"Glass","price":{"formattedValue":"Kr 39,90","value":39.9},...}
+    const jsonMatch = html.match(/\{"name":"[^"]+","packageType"[^§]+?"price"\s*:\s*\{"formattedValue":"[^"]+","readableValue":"[^"]+","value"\s*:\s*([\d.]+)\}/);
 
-    const volMatch = html.match(/"volume"\s*:\s*\{[^}]*"value"\s*:\s*([\d.]+)/);
-    const vol = volMatch ? parseFloat(volMatch[1]) : 750;
+    // Pris
+    const priceMatch = html.match(/"price"\s*:\s*\{[^}]*"value"\s*:\s*([\d.]+)/);
+    const price = priceMatch ? parseFloat(priceMatch[1]) : 0;
 
-    const alcMatch = html.match(/"alcohol"\s*:\s*\{[^}]*"value"\s*:\s*([\d.]+)/) ||
-                     html.match(/"alc"\s*:\s*\{[^}]*"value"\s*:\s*([\d.]+)/);
-    const alc = alcMatch ? parseFloat(alcMatch[1]) : 0;
-
-    const nameMatch = html.match(/"name"\s*:\s*"([^"]+)"/);
+    // Navn – finn strengen etter "productShortName":"
+    const nameMatch = html.match(/"productShortName"\s*:\s*"([^"]+)"/) ||
+                      html.match(/"productName"\s*:\s*"([^"]+)"/);
     const name = nameMatch ? nameMatch[1] : fallbackName;
 
+    // Volum – format er f.eks. "formattedValue":"33 cl" eller "75 cl"
+    const volClMatch = html.match(/"volume"\s*:\s*\{[^}]*"formattedValue"\s*:\s*"([\d.,]+)\s*cl"/);
+    const volMlMatch = html.match(/"volume"\s*:\s*\{[^}]*"formattedValue"\s*:\s*"([\d.,]+)\s*ml"/);
+    const vol = volClMatch
+      ? parseFloat(volClMatch[1].replace(',', '.')) * 10
+      : volMlMatch
+        ? parseFloat(volMlMatch[1].replace(',', '.'))
+        : 750;
+
+    // Alkohol – format er f.eks. "formattedValue":"4,7 %"
+    const alcMatch = html.match(/"alc"\s*:\s*\{[^}]*"formattedValue"\s*:\s*"([\d.,]+)\s*%"/) ||
+                     html.match(/"alcohol"\s*:\s*\{[^}]*"formattedValue"\s*:\s*"([\d.,]+)\s*%"/);
+    const alc = alcMatch ? parseFloat(alcMatch[1].replace(',', '.')) : 0;
+
+    // Kategori
     const catMatch = html.match(/"mainCategory"\s*:\s*\{[^}]*"name"\s*:\s*"([^"]+)"/);
     const category = catMatch ? mapVmpCat(catMatch[1]) : 'brennevin';
 
+    // Underkategori
     const subCatMatch = html.match(/"subCategory"\s*:\s*\{[^}]*"name"\s*:\s*"([^"]+)"/);
     const subCat = subCatMatch ? subCatMatch[1] : '';
 
-    const countryMatch = html.match(/"main_country"\s*:\s*\{[^}]*"name"\s*:\s*"([^"]+)"/) ||
-                         html.match(/"country"\s*:\s*"([^"]+)"/);
+    // Land
+    const countryMatch = html.match(/"main_country"\s*:\s*\{[^}]*"name"\s*:\s*"([^"]+)"/);
     const country = countryMatch ? countryMatch[1] : '';
 
     return {
