@@ -1,4 +1,5 @@
-const SB_JSON_URL = 'https://raw.githubusercontent.com/AlexGustafsson/systembolaget-api-data/main/data/assortment.json';
+// Bruker jsDelivr som CDN-proxy for raskere lasting av stor JSON-fil
+const SB_JSON_URL = 'https://cdn.jsdelivr.net/gh/AlexGustafsson/systembolaget-api-data@main/data/assortment.json';
 const CACHE_TTL = 5 * 60 * 1000;
 
 let _sbCache = null, _sbCacheTime = 0;
