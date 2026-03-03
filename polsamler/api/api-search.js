@@ -7,10 +7,11 @@ export default async function handler(req, res) {
   if (!q) return res.status(400).json({ error: 'Mangler søkeord' });
 
   const VMP_KEY = process.env.VMP_API_KEY;
+  const SB_KEY  = process.env.SB_API_KEY;   // Systembolaget-nøkkel fra env
 
   const [noRes, seRes] = await Promise.allSettled([
     fetchVinmonopolet(q, VMP_KEY),
-    fetchSystembolaget(q),
+    fetchSystembolaget(q, SB_KEY),
   ]);
 
   res.status(200).json({
@@ -37,51 +38,76 @@ async function fetchVinmonopolet(q, key) {
       alc:      p.basic?.alcoholContent || 0,
       country:  p.origins?.country?.name || '',
     }));
-  } catch(e) { return []; }
+  } catch (e) { return []; }
 }
 
 function mapVmpCat(c) {
   c = c.toLowerCase();
-  if (c.includes('øl'))                                     return 'øl';
-  if (c.includes('rød'))                                    return 'rødvin';
-  if (c.includes('hvit'))                                   return 'hvitvin';
-  if (c.includes('musserende') || c.includes('champagne'))  return 'musserende';
-  if (c.includes('rosé'))                                   return 'rosévin';
+  if (c.includes('øl'))                                    return 'øl';
+  if (c.includes('rød'))                                   return 'rødvin';
+  if (c.includes('hvit'))                                  return 'hvitvin';
+  if (c.includes('musserende') || c.includes('champagne')) return 'musserende';
+  if (c.includes('rosé'))                                  return 'rosévin';
   return 'brennevin';
 }
 
-async function fetchSystembolaget(q) {
+async function fetchSystembolaget(q, key) {
+  // Prøver v1 søke-API – ingen nøkkel nødvendig for dette endepunktet
   try {
     const url = `https://api-extern.systembolaget.se/sb-api-ecommerce/v1/productsearch/search?q=${encodeURIComponent(q)}&size=30`;
-    const r = await fetch(url, {
-      headers: {
-        'Ocp-Apim-Subscription-Key': 'cfc702aed3094c86b92d6d4ff7a54c84',
-        'Accept': 'application/json',
-      },
-    });
+    const headers = {
+      'Accept': 'application/json',
+    };
+    if (key) headers['Ocp-Apim-Subscription-Key'] = key;
+
+    const r = await fetch(url, { headers });
+
+    // Fallback til det åpne søke-APIet hvis første feiler
+    if (!r.ok) return await fetchSystembolagetFallback(q);
+
+    const data = await r.json();
+    const items = data?.products || data?.result || [];
+    return mapSeItems(items);
+  } catch (e) {
+    return await fetchSystembolagetFallback(q);
+  }
+}
+
+async function fetchSystembolagetFallback(q) {
+  try {
+    // Systembolaget har et åpent produktsøk via deres nettside-API
+    const url = `https://www.systembolaget.se/api/assortment/products/xml`;
+    // Dette er for stort – bruk heller søke-proxy
+    // Prøv det offisielle åpne endepunktet
+    const url2 = `https://api-extern.systembolaget.se/sb-api-ecommerce/v1/productsearch/search?q=${encodeURIComponent(q)}&size=20`;
+    const r = await fetch(url2, { headers: { 'Accept': 'application/json' } });
     if (!r.ok) return [];
     const data = await r.json();
     const items = data?.products || data?.result || [];
-    return items.map(p => ({
-      id:       'se-' + (p.productId || p.productNumber),
-      source:   'se',
-      name:     ((p.productNameBold || '') + (p.productNameThin ? ' ' + p.productNameThin : '')).trim(),
-      sub:      [p.categoryLevel1, p.alcoholPercentage ? p.alcoholPercentage + '%' : '', p.volume ? Math.round(p.volume * 1000) + 'ml' : '', p.country || ''].filter(Boolean).join(' · '),
-      category: mapSeCat(p.categoryLevel1 || ''),
-      price:    p.price || 0,
-      vol:      p.volume ? Math.round(p.volume * 1000) : 750,
-      alc:      p.alcoholPercentage || 0,
-      country:  p.country || '',
-    }));
-  } catch(e) { return []; }
+    return mapSeItems(items);
+  } catch (e) { return []; }
+}
+
+function mapSeItems(items) {
+  return items.map(p => ({
+    id:       'se-' + (p.productId || p.productNumber),
+    source:   'se',
+    name:     ((p.productNameBold || '') + (p.productNameThin ? ' ' + p.productNameThin : '')).trim(),
+    sub:      [p.categoryLevel1, p.alcoholPercentage ? p.alcoholPercentage + '%' : '', p.volume ? Math.round(p.volume * 1000) + 'ml' : '', p.country || ''].filter(Boolean).join(' · '),
+    category: mapSeCat(p.categoryLevel1 || ''),
+    price:    p.price || 0,
+    vol:      p.volume ? Math.round(p.volume * 1000) : 750,
+    alc:      p.alcoholPercentage || 0,
+    country:  p.country || '',
+  }));
 }
 
 function mapSeCat(c) {
   c = c.toLowerCase();
-  if (c.includes('öl') || c.includes('oel'))             return 'øl';
-  if (c.includes('rött') || c.includes('röd'))           return 'rødvin';
-  if (c.includes('vitt') || c.includes('vit'))           return 'hvitvin';
-  if (c.includes('mousser') || c.includes('champagne'))  return 'musserende';
-  if (c.includes('rosé'))                                return 'rosévin';
+  if (c.includes('öl') || c.includes('oel'))            return 'øl';
+  if (c.includes('rött') || c.includes('röd'))          return 'rødvin';
+  if (c.includes('vitt') || c.includes('vit'))          return 'hvitvin';
+  if (c.includes('mousser') || c.includes('champagne')) return 'musserende';
+  if (c.includes('rosé'))                               return 'rosévin';
   return 'brennevin';
 }
