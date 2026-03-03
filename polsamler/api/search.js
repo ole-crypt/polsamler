@@ -1,12 +1,7 @@
-// Bruker Vinmonopolets åpne CSV-fil og AlexGustafssons Systembolaget-datasett.
-// Ingen API-nøkler nødvendig!
-
-const VMP_CSV_URL = 'https://www.vinmonopolet.no/medias/sys_master/products/products/hbc/hf0/8834253127710/produkter.csv';
 const SB_JSON_URL = 'https://raw.githubusercontent.com/AlexGustafsson/systembolaget-api-data/main/data/assortment.json';
-const CACHE_TTL   = 5 * 60 * 1000; // 5 min
+const CACHE_TTL = 5 * 60 * 1000;
 
-let _vmpCache = null, _vmpCacheTime = 0;
-let _sbCache  = null, _sbCacheTime  = 0;
+let _sbCache = null, _sbCacheTime = 0;
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -27,70 +22,53 @@ export default async function handler(req, res) {
   });
 }
 
-// ─── Vinmonopolet CSV ─────────────────────────────────────────────────────────
+// ─── Vinmonopolet – nettbutikk-søke-API ───────────────────────────────────────
 
 async function fetchVinmonopolet(q) {
   try {
-    if (!_vmpCache || Date.now() - _vmpCacheTime > CACHE_TTL) {
-      const r = await fetch(VMP_CSV_URL);
-      if (!r.ok) return [];
-      const text = await r.text();
-      _vmpCache = parseVmpCsv(text);
-      _vmpCacheTime = Date.now();
-    }
-
-    const lq = q.toLowerCase();
-    return _vmpCache
-      .filter(p => p.name.toLowerCase().includes(lq))
-      .slice(0, 30);
+    const url = `https://www.vinmonopolet.no/vmpws/v2/vmp/search?q=${encodeURIComponent(q)}&searchType=product&currentPage=0&pageSize=30`;
+    const r = await fetch(url, {
+      headers: {
+        'Accept': 'application/json',
+        'User-Agent': 'Mozilla/5.0',
+      },
+    });
+    if (!r.ok) return [];
+    const data = await r.json();
+    const items = data?.productSearchResult?.products || [];
+    return items.map(p => ({
+      id:       'no-' + p.code,
+      source:   'no',
+      name:     p.name || '',
+      sub:      [
+        p.main_category?.name,
+        p.content?.volume?.formattedValue,
+        p.content?.alc?.formattedValue,
+        p.main_country?.name || '',
+      ].filter(Boolean).join(' · '),
+      category: mapVmpCat(p.main_category?.name || ''),
+      price:    p.price?.value || 0,
+      vol:      parseVol(p.content?.volume?.formattedValue),
+      alc:      parseAlc(p.content?.alc?.formattedValue),
+      country:  p.main_country?.name || '',
+    }));
   } catch (e) { return []; }
 }
 
-function parseVmpCsv(text) {
-  const lines = text.split('\n');
-  if (lines.length < 2) return [];
+function parseVol(s) {
+  if (!s) return 750;
+  const m = s.match(/([\d.,]+)/);
+  return m ? parseFloat(m[1].replace(',', '.')) * (s.includes('cl') ? 10 : s.includes('l') && !s.includes('ml') ? 1000 : 1) : 750;
+}
 
-  // Finn kolonneindekser fra header
-  const sep = ';';
-  const headers = lines[0].split(sep).map(h => h.trim().replace(/^"|"$/g, ''));
-
-  const idx = {
-    id:    headers.indexOf('Varenummer'),
-    name:  headers.indexOf('Varenavn'),
-    type:  headers.indexOf('Varetype'),
-    vol:   headers.indexOf('Volum'),
-    alc:   headers.indexOf('Alkohol'),
-    price: headers.indexOf('Pris'),
-    country: headers.indexOf('Land'),
-  };
-
-  const products = [];
-  for (let i = 1; i < lines.length; i++) {
-    const cols = lines[i].split(sep).map(c => c.trim().replace(/^"|"$/g, ''));
-    if (cols.length < 5) continue;
-
-    const name  = cols[idx.name]  || '';
-    const type  = cols[idx.type]  || '';
-    const volRaw   = parseFloat((cols[idx.vol]   || '0').replace(',', '.')) || 0;
-    const alcRaw   = parseFloat((cols[idx.alc]   || '0').replace(',', '.')) || 0;
-    const priceRaw = parseFloat((cols[idx.price] || '0').replace(',', '.')) || 0;
-
-    products.push({
-      id:       'no-' + (cols[idx.id] || i),
-      source:   'no',
-      name,
-      sub:      [type, alcRaw ? alcRaw + '%' : '', volRaw ? volRaw + 'ml' : '', cols[idx.country] || ''].filter(Boolean).join(' · '),
-      category: mapVmpCat(type),
-      price:    priceRaw,
-      vol:      volRaw,
-      alc:      alcRaw,
-      country:  cols[idx.country] || '',
-    });
-  }
-  return products;
+function parseAlc(s) {
+  if (!s) return 0;
+  const m = s.match(/([\d.,]+)/);
+  return m ? parseFloat(m[1].replace(',', '.')) : 0;
 }
 
 function mapVmpCat(c) {
+  if (!c) return 'brennevin';
   c = c.toLowerCase();
   if (c.includes('øl'))                                    return 'øl';
   if (c.includes('rød'))                                   return 'rødvin';
@@ -100,7 +78,7 @@ function mapVmpCat(c) {
   return 'brennevin';
 }
 
-// ─── Systembolaget JSON ───────────────────────────────────────────────────────
+// ─── Systembolaget – GitHub-datasett ─────────────────────────────────────────
 
 async function fetchSystembolaget(q) {
   try {
@@ -110,7 +88,6 @@ async function fetchSystembolaget(q) {
       _sbCache = await r.json();
       _sbCacheTime = Date.now();
     }
-
     const lq = q.toLowerCase();
     return _sbCache
       .filter(p => ((p.productNameBold || '') + ' ' + (p.productNameThin || '')).toLowerCase().includes(lq))
