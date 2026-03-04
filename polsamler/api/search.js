@@ -1,10 +1,16 @@
-export default async function handler(req, res) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS');
-  if (req.method === 'OPTIONS') return res.status(200).end();
+export const config = { runtime: 'edge' };
 
-  const { q = '' } = req.query;
-  if (!q) return res.status(400).json({ error: 'Mangler søkeord' });
+export default async function handler(req) {
+  const corsHeaders = {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET,OPTIONS',
+    'Content-Type': 'application/json',
+  };
+  if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
+
+  const url = new URL(req.url);
+  const q = url.searchParams.get('q') || '';
+  if (!q) return new Response(JSON.stringify({ error: 'Mangler søkeord' }), { status: 400, headers: corsHeaders });
 
   const [noRes, seRes] = await Promise.allSettled([
     fetchVinmonopolet(q),
@@ -15,11 +21,11 @@ export default async function handler(req, res) {
   if (noRes.status === 'rejected') errors.push('vinmonopolet: ' + noRes.reason?.message);
   if (seRes.status === 'rejected') errors.push('systembolaget: ' + seRes.reason?.message);
 
-  res.status(200).json({
+  return new Response(JSON.stringify({
     no: noRes.status === 'fulfilled' ? noRes.value : [],
     se: seRes.status === 'fulfilled' ? seRes.value : [],
     ...(errors.length ? { errors } : {}),
-  });
+  }), { headers: corsHeaders });
 }
 
 // ─── Vinmonopolet via internt søke-API ───────────────────────────────────────
