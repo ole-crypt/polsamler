@@ -17,10 +17,21 @@ export default async function handler(req, res) {
   if (noRes.status === 'rejected') errors.push('vinmonopolet: ' + noRes.reason?.message);
   if (seRes.status === 'rejected') errors.push('systembolaget: ' + seRes.reason?.message);
 
+  // Debug: vis rå Vinmonopolet-data om ?debug=1
+  let debug;
+  if (req.query.debug === '1' && VMP_KEY) {
+    try {
+      const dUrl = `https://apis.vinmonopolet.no/products/v0/details-normal?productShortNameContains=${encodeURIComponent(q)}&maxResults=1`;
+      const dR = await fetch(dUrl, { headers: { 'Ocp-Apim-Subscription-Key': VMP_KEY } });
+      debug = { status: dR.status, body: dR.ok ? await dR.json() : await dR.text() };
+    } catch (e) { debug = { error: e.message }; }
+  }
+
   res.status(200).json({
     no: noRes.status === 'fulfilled' ? noRes.value : [],
     se: seRes.status === 'fulfilled' ? seRes.value : [],
     ...(errors.length ? { errors } : {}),
+    ...(debug ? { _debug_vmp: debug } : {}),
   });
 }
 
@@ -33,17 +44,30 @@ async function fetchVinmonopolet(q, key) {
     const r = await fetch(url, { headers: { 'Ocp-Apim-Subscription-Key': key } });
     if (!r.ok) return [];
     const data = await r.json();
-    return (data || []).map(p => ({
-      id:       'no-' + p.basic?.productId,
-      source:   'no',
-      name:     p.basic?.productShortName || p.basic?.productLongName || '',
-      sub:      [p.main?.subCategory?.name, p.basic?.alcoholContent ? p.basic.alcoholContent + '%' : '', p.basic?.volume ? p.basic.volume + 'ml' : '', p.origins?.country?.name || ''].filter(Boolean).join(' · '),
-      category: mapVmpCat(p.main?.mainCategory?.name || ''),
-      price:    p.prices?.[0]?.salesPrice || 0,
-      vol:      p.basic?.volume || 750,
-      alc:      p.basic?.alcoholContent || 0,
-      country:  p.origins?.country?.name || '',
-    }));
+    return (data || []).map(p => {
+      // Håndter at Vinmonopolet kan returnere flat eller nestet struktur
+      const basic   = p.basic   || p;
+      const main    = p.main    || p;
+      const origins = p.origins || p;
+      const prices  = p.prices  || p.price;
+      const price   = Array.isArray(prices) ? prices[0]?.salesPrice : (prices?.salesPrice || p.price || 0);
+      return {
+        id:       'no-' + (basic.productId || p.productId || ''),
+        source:   'no',
+        name:     basic.productShortName || basic.productLongName || p.name || '',
+        sub:      [
+          main.subCategory?.name || main.sub_category || p.productType || '',
+          basic.alcoholContent ? basic.alcoholContent + '%' : (p.alcoholContent ? p.alcoholContent + '%' : ''),
+          basic.volume ? basic.volume + 'ml' : (p.volume ? p.volume + 'ml' : ''),
+          origins.country?.name || origins.countryName || p.country || '',
+        ].filter(Boolean).join(' · '),
+        category: mapVmpCat(main.mainCategory?.name || main.main_category || p.productType || ''),
+        price:    price || 0,
+        vol:      basic.volume || p.volume || 750,
+        alc:      basic.alcoholContent || p.alcoholContent || 0,
+        country:  origins.country?.name || origins.countryName || p.country || '',
+      };
+    });
   } catch (e) { return []; }
 }
 
@@ -103,12 +127,13 @@ async function fetchSystembolaget(q) {
   const apiKey = await extractSbApiKey();
 
   const url = `${SB_SEARCH_URL}?textQuery=${encodeURIComponent(q)}&size=30&page=1`;
-  const r = await fetch(url, {
-    headers: {
-      'Ocp-Apim-Subscription-Key': apiKey,
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-    },
-  });
+  const sbHeaders = {
+    'Ocp-Apim-Subscription-Key': apiKey,
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+    'Origin': 'https://www.systembolaget.se',
+    'Referer': 'https://www.systembolaget.se/',
+  };
+  const r = await fetch(url, { headers: sbHeaders });
 
   if (!r.ok) {
     // Nøkkelen kan ha utløpt – nullstill cache og prøv én gang til
@@ -116,12 +141,8 @@ async function fetchSystembolaget(q) {
       _sbApiKey = null;
       _sbKeyTime = 0;
       const freshKey = await extractSbApiKey();
-      const r2 = await fetch(url, {
-        headers: {
-          'Ocp-Apim-Subscription-Key': freshKey,
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        },
-      });
+      sbHeaders['Ocp-Apim-Subscription-Key'] = freshKey;
+      const r2 = await fetch(url, { headers: sbHeaders });
       if (!r2.ok) throw new Error(`Systembolaget API ${r2.status}: ${r2.statusText}`);
       return mapSbResponse(await r2.json());
     }
