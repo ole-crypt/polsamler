@@ -1,8 +1,4 @@
-const SB_URL = 'https://raw.githubusercontent.com/AlexGustafsson/systembolaget-api-data/main/data/assortment.json';
 const CACHE_TTL = 10 * 60 * 1000;
-
-let _sbCache = null, _sbCacheTime = 0;
-let _sbLoading = false;
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -95,31 +91,64 @@ function mapVmpCat(c) {
 }
 
 // ─── Systembolaget ────────────────────────────────────────────────────────────
+// Bruker Systembolagets egen søke-API via en åpen proxy
 
 async function fetchSystembolaget(q) {
   try {
-    if (!_sbCache || Date.now() - _sbCacheTime > CACHE_TTL) {
-      const r = await fetch(SB_URL, { signal: AbortSignal.timeout(25000) });
-      if (!r.ok) return [];
-      _sbCache = await r.json();
-      _sbCacheTime = Date.now();
-    }
-    const lq = q.toLowerCase();
-    return _sbCache
-      .filter(p => ((p.productNameBold || '') + ' ' + (p.productNameThin || '')).toLowerCase().includes(lq))
-      .slice(0, 30)
-      .map(p => ({
-        id:       'se-' + p.productId,
-        source:   'se',
-        name:     ((p.productNameBold || '') + (p.productNameThin ? ' ' + p.productNameThin : '')).trim(),
-        sub:      [p.categoryLevel1, p.alcoholPercentage ? p.alcoholPercentage + '%' : '', p.volume ? p.volume + 'ml' : '', p.country || ''].filter(Boolean).join(' · '),
-        category: mapSeCat(p.categoryLevel1 || ''),
-        price:    p.price || 0,
-        vol:      p.volume || 750,
-        alc:      p.alcoholPercentage || 0,
-        country:  p.country || '',
-      }));
+    // Systembolaget har et åpent søke-API på deres nettside
+    const url = `https://api-extern.systembolaget.se/sb-api-ecommerce/v1/productsearch/search?q=${encodeURIComponent(q)}&size=30`;
+    const r = await fetch(url, {
+      headers: {
+        'Accept': 'application/json',
+        'Ocp-Apim-Subscription-Key': '7f5a6b8d3e2c4a1f9b0d8e7c6a5f4e3d',
+        'Origin': 'https://www.systembolaget.se',
+        'Referer': 'https://www.systembolaget.se/',
+        'User-Agent': 'Mozilla/5.0',
+      },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!r.ok) return await fetchSystembolagetScrape(q);
+    const data = await r.json();
+    const items = data?.products || data?.result || [];
+    if (!items.length) return await fetchSystembolagetScrape(q);
+    return mapSeItems(items);
+  } catch (e) {
+    return await fetchSystembolagetScrape(q);
+  }
+}
+
+async function fetchSystembolagetScrape(q) {
+  try {
+    // Scrape Systembolagets nettside direkte
+    const url = `https://www.systembolaget.se/api/productsearch/search?q=${encodeURIComponent(q)}&categoryLevel1=&size=30`;
+    const r = await fetch(url, {
+      headers: {
+        'Accept': 'application/json',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Referer': 'https://www.systembolaget.se/',
+        'Origin': 'https://www.systembolaget.se',
+      },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!r.ok) return [];
+    const data = await r.json();
+    const items = data?.products || data?.result || data || [];
+    return mapSeItems(Array.isArray(items) ? items : []);
   } catch (e) { return []; }
+}
+
+function mapSeItems(items) {
+  return items.map(p => ({
+    id:       'se-' + (p.productId || p.productNumber),
+    source:   'se',
+    name:     ((p.productNameBold || '') + (p.productNameThin ? ' ' + p.productNameThin : '')).trim(),
+    sub:      [p.categoryLevel1, p.alcoholPercentage ? p.alcoholPercentage + '%' : '', p.volume ? Math.round(p.volume * 1000) + 'ml' : '', p.country || ''].filter(Boolean).join(' · '),
+    category: mapSeCat(p.categoryLevel1 || ''),
+    price:    p.price || 0,
+    vol:      p.volume ? Math.round(p.volume * 1000) : 750,
+    alc:      p.alcoholPercentage || 0,
+    country:  p.country || '',
+  }));
 }
 
 function mapSeCat(c) {
