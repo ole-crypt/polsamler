@@ -6,10 +6,8 @@ export default async function handler(req, res) {
   const { q = '' } = req.query;
   if (!q) return res.status(400).json({ error: 'Mangler søkeord' });
 
-  const VMP_KEY = process.env.VMP_API_KEY;
-
   const [noRes, seRes] = await Promise.allSettled([
-    fetchVinmonopolet(q, VMP_KEY),
+    fetchVinmonopolet(q),
     fetchSystembolaget(q),
   ]);
 
@@ -17,58 +15,40 @@ export default async function handler(req, res) {
   if (noRes.status === 'rejected') errors.push('vinmonopolet: ' + noRes.reason?.message);
   if (seRes.status === 'rejected') errors.push('systembolaget: ' + seRes.reason?.message);
 
-  // Debug: vis rå Vinmonopolet-data om ?debug=1
-  let debug;
-  if (req.query.debug === '1' && VMP_KEY) {
-    try {
-      const dUrl = `https://apis.vinmonopolet.no/products/v0/details-normal?productShortNameContains=${encodeURIComponent(q)}&maxResults=1`;
-      const dR = await fetch(dUrl, { headers: { 'Ocp-Apim-Subscription-Key': VMP_KEY } });
-      debug = { status: dR.status, body: dR.ok ? await dR.json() : await dR.text() };
-    } catch (e) { debug = { error: e.message }; }
-  }
-
   res.status(200).json({
     no: noRes.status === 'fulfilled' ? noRes.value : [],
     se: seRes.status === 'fulfilled' ? seRes.value : [],
     ...(errors.length ? { errors } : {}),
-    ...(debug ? { _debug_vmp: debug } : {}),
   });
 }
 
-// ─── Vinmonopolet ─────────────────────────────────────────────────────────────
+// ─── Vinmonopolet via internt søke-API ───────────────────────────────────────
 
-async function fetchVinmonopolet(q, key) {
-  if (!key) return [];
-  try {
-    const url = `https://apis.vinmonopolet.no/products/v0/details-normal?productShortNameContains=${encodeURIComponent(q)}&maxResults=30`;
-    const r = await fetch(url, { headers: { 'Ocp-Apim-Subscription-Key': key } });
-    if (!r.ok) return [];
-    const data = await r.json();
-    return (data || []).map(p => {
-      // Håndter at Vinmonopolet kan returnere flat eller nestet struktur
-      const basic   = p.basic   || p;
-      const main    = p.main    || p;
-      const origins = p.origins || p;
-      const prices  = p.prices  || p.price;
-      const price   = Array.isArray(prices) ? prices[0]?.salesPrice : (prices?.salesPrice || p.price || 0);
-      return {
-        id:       'no-' + (basic.productId || p.productId || ''),
-        source:   'no',
-        name:     basic.productShortName || basic.productLongName || p.name || '',
-        sub:      [
-          main.subCategory?.name || main.sub_category || p.productType || '',
-          basic.alcoholContent ? basic.alcoholContent + '%' : (p.alcoholContent ? p.alcoholContent + '%' : ''),
-          basic.volume ? basic.volume + 'ml' : (p.volume ? p.volume + 'ml' : ''),
-          origins.country?.name || origins.countryName || p.country || '',
-        ].filter(Boolean).join(' · '),
-        category: mapVmpCat(main.mainCategory?.name || main.main_category || p.productType || ''),
-        price:    price || 0,
-        vol:      basic.volume || p.volume || 750,
-        alc:      basic.alcoholContent || p.alcoholContent || 0,
-        country:  origins.country?.name || origins.countryName || p.country || '',
-      };
-    });
-  } catch (e) { return []; }
+const VMP_SEARCH_URL = 'https://www.vinmonopolet.no/vmpws/v2/vmp/products/search';
+
+async function fetchVinmonopolet(q) {
+  const url = `${VMP_SEARCH_URL}?q=${encodeURIComponent(q)}&searchType=product&fields=FULL&pageSize=30&currentPage=0`;
+  const r = await fetch(url, {
+    headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+  });
+  if (!r.ok) throw new Error(`Vinmonopolet ${r.status}: ${r.statusText}`);
+  const data = await r.json();
+  return (data.products || []).map(p => ({
+    id:       'no-' + (p.code || ''),
+    source:   'no',
+    name:     p.name || '',
+    sub:      [
+      p.main_sub_category?.name || '',
+      p.alcohol?.value ? p.alcohol.value + '%' : '',
+      p.volume?.value ? (p.volume.value * 10) + 'ml' : '',
+      p.main_country?.name || '',
+    ].filter(Boolean).join(' · '),
+    category: mapVmpCat(p.main_category?.name || ''),
+    price:    p.price?.value || 0,
+    vol:      p.volume?.value ? p.volume.value * 10 : 750,  // cl → ml
+    alc:      p.alcohol?.value || 0,
+    country:  p.main_country?.name || '',
+  }));
 }
 
 function mapVmpCat(c) {
