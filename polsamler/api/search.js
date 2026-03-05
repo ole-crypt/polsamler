@@ -10,11 +10,27 @@ export default async function handler(req) {
 
   const url = new URL(req.url);
   const q = url.searchParams.get('q') || '';
-  if (!q) return new Response(JSON.stringify({ error: 'Mangler søkeord' }), { status: 400, headers: corsHeaders });
+  const cat = url.searchParams.get('cat') || '';
+  if (!q && !cat) return new Response(JSON.stringify({ error: 'Mangler søkeord' }), { status: 400, headers: corsHeaders });
+
+  const CAT_TERMS = {
+    'øl':         { no: 'øl',         se: 'öl' },
+    'rødvin':     { no: 'rødvin',     se: 'rött vin' },
+    'hvitvin':    { no: 'hvitvin',    se: 'vitt vin' },
+    'musserende': { no: 'musserende', se: 'mousserande vin' },
+    'brennevin':  { no: 'brennevin',  se: 'sprit' },
+    'rosévin':    { no: 'rosévin',    se: 'rosévin' },
+  };
+
+  let noQuery = q, seQuery = q;
+  if (cat && CAT_TERMS[cat]) {
+    noQuery = CAT_TERMS[cat].no;
+    seQuery = CAT_TERMS[cat].se;
+  }
 
   const [noRes, seRes] = await Promise.allSettled([
-    fetchVinmonopolet(q),
-    fetchSystembolaget(q),
+    fetchVinmonopolet(noQuery),
+    fetchSystembolaget(seQuery),
   ]);
 
   const errors = [];
