@@ -193,6 +193,17 @@ const SE_OL=[
 let appState={results:[],filtered:[],activeCategory:'',sortCol:'name',sortDir:'asc',isDemo:true};
 let _blinkInterval=null;
 
+function normName(n){return n.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9\s]/g,'').replace(/\s+/g,' ').trim();}
+function canMatch(a,b){
+  const wa=normName(a).split(' ').filter(w=>w.length>=2);
+  const wb=normName(b).split(' ').filter(w=>w.length>=2);
+  if(!wa.length||!wb.length)return false;
+  if(wa[0]!==wb[0])return false;
+  if(wa.length===1&&wb.length===1)return true;
+  if(wa.length===1||wb.length===1)return false;
+  return wa[1].slice(0,3)===wb[1].slice(0,3);
+}
+
 (function(){const all=[...SE_OL,...SE_OL];document.getElementById('tickerEl').innerHTML=all.map(t=>`<span class="tick-item"><span style="font-size:0.85rem">🇸🇪</span><span class="tick-name">${t.sym}</span><span class="tick-price">${t.p.toFixed(2)} SEK</span><span class="${t.up?'tick-up':'tick-dn'}">${t.d}</span></span>`).join('');})();
 
 setInterval(()=>{document.getElementById('clockEl').textContent=new Date().toLocaleTimeString('no',{hour:'2-digit',minute:'2-digit',second:'2-digit'})+' Oslo';},1000);
@@ -236,8 +247,12 @@ function renderTable(){
   if(!data.length){el.innerHTML=`<div class="empty-state"><div class="big">🔍</div><p>Ingen produkter funnet</p></div>`;return;}
   const noItems=data.filter(p=>p.source==='no'),seItems=data.filter(p=>p.source==='se');
   const rows=[];const usedSe=new Set();
-  noItems.forEach(no=>{const se=seItems.find(s=>s.name.toLowerCase()===no.name.toLowerCase()&&!usedSe.has(s.id));if(se){usedSe.add(se.id);rows.push({no,se});}else rows.push({no,se:null});});
-  seItems.filter(s=>!usedSe.has(s.id)).forEach(se=>rows.push({no:null,se}));
+  noItems.forEach(no=>{
+    let bestSe=null,bestVol=0;
+    seItems.forEach(se=>{if(usedSe.has(se.id))return;if(!canMatch(no.name,se.name))return;const vs=no.vol&&se.vol?1-Math.abs(no.vol-se.vol)/Math.max(no.vol,se.vol):0.5;if(vs>bestVol){bestVol=vs;bestSe=se;}});
+    if(bestSe){usedSe.add(bestSe.id);rows.push({no,se:bestSe});}
+  });
+  if(!rows.length){el.innerHTML=`<div class="empty-state"><div class="big">🔍🇳🇴🇸🇪</div><p>Ingen produkter funnet i begge land</p></div>`;return;}
   const sa=c=>appState.sortCol===c?(appState.sortDir==='asc'?' ↑':' ↓'):'';
   el.innerHTML=`
     <div class="sort-bar">
