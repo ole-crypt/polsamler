@@ -190,7 +190,7 @@ const SE_OL=[
   {sym:'OMNIBL',p:42.0,d:'-1.2%',up:false},{sym:'NYNSMN',p:29.9,d:'+0.7%',up:true},
   {sym:'SLTTRY',p:38.5,d:'+1.8%',up:true},{sym:'MARISTR',p:20.9,d:'-0.1%',up:false},
 ];
-let appState={results:[],filtered:[],activeCategory:'',sortCol:'name',sortDir:'asc',isDemo:true};
+let appState={results:[],filtered:[],activeCategory:'',sortCol:'name',sortDir:'asc',isDemo:true,isCatBrowse:false};
 let _blinkInterval=null;
 
 function normName(n){return n.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9\s]/g,'').replace(/\s+/g,' ').trim();}
@@ -223,6 +223,7 @@ document.getElementById('logoBtn').onclick=showSearch;
 
 async function doSearch(){
   const q=document.getElementById('searchInput').value.trim();if(!q)return;
+  appState.isCatBrowse=false;
   document.getElementById('results').innerHTML=`<div class="loading"><div class="spinner"></div><br>Henter priser…</div>`;
   try{
     const res=await fetch(`/api/search?q=${encodeURIComponent(q)}`);
@@ -237,6 +238,7 @@ async function doSearch(){
 
 async function doCatSearch(cat){
   document.getElementById('searchInput').value='';
+  appState.isCatBrowse=true;
   document.getElementById('results').innerHTML=`<div class="loading"><div class="spinner"></div><br>Henter ${cat}…</div>`;
   try{
     const res=await fetch(`/api/search?cat=${encodeURIComponent(cat)}`);
@@ -265,8 +267,10 @@ function renderTable(){
     let bestSe=null,bestVol=0;
     seItems.forEach(se=>{if(usedSe.has(se.id))return;if(!canMatch(no.name,se.name))return;const vs=no.vol&&se.vol?1-Math.abs(no.vol-se.vol)/Math.max(no.vol,se.vol):0.5;if(vs>bestVol){bestVol=vs;bestSe=se;}});
     if(bestSe){usedSe.add(bestSe.id);rows.push({no,se:bestSe});}
+    else if(appState.isCatBrowse)rows.push({no,se:null});
   });
-  if(!rows.length){el.innerHTML=`<div class="empty-state"><div class="big">🔍🇳🇴🇸🇪</div><p>Ingen produkter funnet i begge land</p></div>`;return;}
+  if(appState.isCatBrowse)seItems.filter(s=>!usedSe.has(s.id)).forEach(se=>rows.push({no:null,se}));
+  if(!rows.length){el.innerHTML=`<div class="empty-state"><div class="big">🔍🇳🇴🇸🇪</div><p>${appState.isCatBrowse?'Ingen produkter funnet':'Ingen produkter funnet i begge land'}</p></div>`;return;}
   const sa=c=>appState.sortCol===c?(appState.sortDir==='asc'?' ↑':' ↓'):'';
   el.innerHTML=`
     <div class="sort-bar">
