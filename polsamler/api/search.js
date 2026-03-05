@@ -144,8 +144,8 @@ function mapSbResponse(data) {
     id:       'se-' + (p.productNumber || p.productId),
     source:   'se',
     name:     ((p.productNameBold || '') + (p.productNameThin ? ' ' + p.productNameThin : '')).trim(),
-    sub:      [p.categoryLevel1, p.alcoholPercentage ? p.alcoholPercentage + '%' : '', p.volume ? p.volume + 'ml' : '', p.country || ''].filter(Boolean).join(' · '),
-    category: mapSeCat(p.categoryLevel1 || ''),
+    sub:      [p.categoryLevel2 || p.categoryLevel1, p.alcoholPercentage ? p.alcoholPercentage + '%' : '', p.volume ? p.volume + 'ml' : '', p.country || ''].filter(Boolean).join(' · '),
+    category: mapSeCat(p.categoryLevel1 || '', p.categoryLevel2 || ''),
     price:    p.price || 0,
     vol:      p.volume || 750,
     alc:      p.alcoholPercentage || 0,
@@ -153,11 +153,11 @@ function mapSbResponse(data) {
   }));
 }
 
-function mapSeCat(c) {
-  c = c.toLowerCase();
+function mapSeCat(c1, c2) {
+  const c = (c1 + ' ' + c2).toLowerCase();
   if (c.includes('öl') || c.includes('oel'))            return 'øl';
   if (c.includes('rött') || c.includes('röd'))          return 'rødvin';
-  if (c.includes('vitt') || c.includes('vit'))          return 'hvitvin';
+  if (c.includes('vitt') || c.includes('vit vin'))      return 'hvitvin';
   if (c.includes('mousser') || c.includes('champagne')) return 'musserende';
   if (c.includes('rosé'))                               return 'rosévin';
   return 'brennevin';
