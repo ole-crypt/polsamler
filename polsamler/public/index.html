@@ -235,6 +235,20 @@ async function doSearch(){
   applyFilter();
 }
 
+async function doCatSearch(cat){
+  document.getElementById('searchInput').value='';
+  document.getElementById('results').innerHTML=`<div class="loading"><div class="spinner"></div><br>Henter ${cat}…</div>`;
+  try{
+    const res=await fetch(`/api/search?cat=${encodeURIComponent(cat)}`);
+    if(!res.ok)throw new Error('API-feil');
+    const{no,se}=await res.json();
+    appState.results=[...no,...se];
+    appState.isDemo=false;
+  }catch(e){appState.results=[];appState.isDemo=false;}
+  appState.activeCategory=cat;
+  applyFilter();
+}
+
 function applyFilter(){
   let data=appState.results.filter(p=>!appState.activeCategory||p.category===appState.activeCategory);
   data.forEach(p=>{p.price_nok=p.source==='no'?p.price:p.price/RATE;p.price_sek=p.source==='se'?p.price:p.price*RATE;p.mlpkr=p.vol&&p.price>0?p.vol/p.price:0;});
@@ -402,7 +416,7 @@ function renderProduct(p){
 
 document.getElementById('searchBtn').onclick=doSearch;
 document.getElementById('searchInput').addEventListener('keydown',e=>e.key==='Enter'&&doSearch());
-document.getElementById('filterRow').addEventListener('click',e=>{const b=e.target.closest('.filter-btn');if(!b)return;document.querySelectorAll('.filter-btn').forEach(x=>x.classList.remove('active'));b.classList.add('active');appState.activeCategory=b.dataset.cat;applyFilter();});
+document.getElementById('filterRow').addEventListener('click',e=>{const b=e.target.closest('.filter-btn');if(!b)return;document.querySelectorAll('.filter-btn').forEach(x=>x.classList.remove('active'));b.classList.add('active');const cat=b.dataset.cat;if(cat){doCatSearch(cat);}else{appState.activeCategory='';applyFilter();}});
 appState.results=DEMO;appState.isDemo=true;applyFilter();
 </script>
 </body>
